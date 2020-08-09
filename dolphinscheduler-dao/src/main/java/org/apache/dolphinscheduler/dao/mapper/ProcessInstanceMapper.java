@@ -78,6 +78,20 @@ public interface ProcessInstanceMapper extends BaseMapper<ProcessInstance> {
      * @param endTime endTime
      * @return process instance IPage
      */
+
+    /**
+     * process instance page
+     * @param page page
+     * @param projectId projectId
+     * @param processDefinitionId processDefinitionId
+     * @param searchVal searchVal
+     * @param executorId executorId
+     * @param statusArray statusArray
+     * @param host host
+     * @param startTime startTime
+     * @param endTime endTime
+     * @return process instance page
+     */
     IPage<ProcessInstance> queryProcessInstanceListPaging(Page<ProcessInstance> page,
                                                           @Param("projectId") int projectId,
                                                           @Param("processDefinitionId") Integer processDefinitionId,
@@ -179,4 +193,17 @@ public interface ProcessInstanceMapper extends BaseMapper<ProcessInstance> {
     ProcessInstance queryLastManualProcess(@Param("processDefinitionId") int definitionId,
                                            @Param("startTime") Date startTime,
                                            @Param("endTime") Date endTime);
+    /**
+     * query top n process instance order by running duration
+     * @param size
+     * @param status process instance status
+     * @param startTime
+     * @param endTime
+     * @return ProcessInstance list
+     */
+    List<ProcessInstance> queryTopNProcessInstance(@Param("size") int size,
+                                                   @Param("startTime") Date startTime,
+                                                   @Param("endTime") Date endTime,
+                                                   @Param("status")ExecutionStatus status);
+
 }

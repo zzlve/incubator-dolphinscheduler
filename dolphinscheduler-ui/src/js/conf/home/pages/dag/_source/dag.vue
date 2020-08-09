@@ -77,7 +77,7 @@
                   icon="ans-icon-triangle-solid-right"
                   size="xsmall"
                   data-container="body"
-                  v-if="type === 'instance'"
+                  v-if="(type === 'instance' || 'definition') && urlParam.id !=undefined"
                   style="vertical-align: middle;"
                   @click="dagAutomaticLayout">
           </x-button>
@@ -100,6 +100,17 @@
                   icon="ans-icon-play"
                   @click="_rtNodesDag" >
             {{$t('Return_1')}}
+          </x-button>
+          <x-button
+            type="primary"
+            v-tooltip.light="$t('Close')" 
+            icon="ans-icon-off"
+            size="xsmall"
+            data-container="body"
+            v-if="(type === 'instance' || 'definition') "
+            style="vertical-align: middle;"
+            @click="_closeDAG">
+            {{$t('Close')}}
           </x-button>
           <x-button
                   style="vertical-align: middle;"
@@ -131,6 +142,7 @@
   import { allNodesId } from './plugIn/util'
   import { toolOper, tasksType } from './config'
   import mFormModel from './formModel/formModel'
+  import mFormLineModel from './formModel/formLineModel'
   import { formatDate } from '@/module/filter/filter'
   import { findComponentDownward } from '@/module/util/'
   import disabledState from '@/module/mixin/disabledState'
@@ -155,6 +167,7 @@
         isLoading: false,
         taskId: null,
         arg: false,
+
       }
     },
     mixins: [disabledState],
@@ -164,10 +177,14 @@
     },
     methods: {
       ...mapActions('dag', ['saveDAGchart', 'updateInstance', 'updateDefinition', 'getTaskState']),
-      ...mapMutations('dag', ['addTasks', 'cacheTasks', 'resetParams', 'setIsEditDag', 'setName']),
+      ...mapMutations('dag', ['addTasks', 'cacheTasks', 'resetParams', 'setIsEditDag', 'setName', 'addConnects']),
 
       // DAG automatic layout
       dagAutomaticLayout() {
+        if(this.store.state.dag.isEditDag) {
+          this.$message.warning(`${i18n.$t('Please save the DAG before formatting')}`)
+          return false
+        }
         $('#canvas').html('')
 
       // Destroy round robin
@@ -177,8 +194,9 @@
           Endpoint: [
             'Dot', { radius: 1, cssClass: 'dot-style' }
           ],
-          Connector: 'Straight',
+          Connector: 'Bezier',
           PaintStyle: { lineWidth: 2, stroke: '#456' }, // Connection style
+          HoverPaintStyle: {stroke: '#ccc', strokeWidth: 3}, 
           ConnectionOverlays: [
             [
               'Arrow',
@@ -188,9 +206,14 @@
                 length: 12,
                 foldback: 0.8
               }
-            ]
+            ],
+            ['Label', {
+                location: 0.5,
+                id: 'label'
+            }]
           ],
-          Container: 'canvas'
+          Container: 'canvas',
+          ConnectionsDetachable: true
         })
       })
         if (this.tasks.length) {
@@ -259,8 +282,15 @@
                 if (v2.name === v1.name) {
                   let dom = $(`#${v2.id}`)
                   let state = dom.find('.state-p')
+                  let depState = ''
+                   taskList.forEach(item=>{
+                    if(item.name==v1.name) {
+                      depState = item.state
+                    }
+                  })
                   dom.attr('data-state-id', v1.stateId)
                   dom.attr('data-dependent-result', v1.dependentResult || '')
+                  dom.attr('data-dependent-depState', depState)
                   state.append(`<strong class="${v1.icoUnicode} ${v1.isSpin ? 'as as-spin' : ''}" style="color:${v1.color}" data-toggle="tooltip" data-html="true" data-container="body"></strong>`)
                   state.find('strong').attr('title', titleTpl(v2, v1.desc))
                 }
@@ -326,11 +356,11 @@
        * Storage interface
        */
       _save (sourceType) {
-        if(this._verifConditions()) {
-          return new Promise((resolve, reject) => {
-            this.spinnerLoading = true
-            // Storage store
-            Dag.saveStore().then(res => {
+        return new Promise((resolve, reject) => {
+          this.spinnerLoading = true
+          // Storage store
+          Dag.saveStore().then(res => {
+            if(this._verifConditions(res.tasks)) {
               if (this.urlParam.id) {
                 /**
                  * Edit
@@ -364,12 +394,20 @@
                   reject(e)
                 })
               }
-            })
+            }
           })
+        })
+      },
+      _closeDAG(){
+        let $name = this.$route.name
+        if($name && $name.indexOf("definition") != -1){
+          this.$router.push({ name: 'projects-definition-list'})
+        }else{
+          this.$router.push({ name: 'projects-instance-list'})
         }
       },
-      _verifConditions () {
-        let tasks = this.$store.state.dag.tasks
+      _verifConditions (value) {
+        let tasks = value
         let bool = true
         tasks.map(v=>{
           if(v.type == 'CONDITIONS' && (v.conditionResult.successNode[0] =='' || v.conditionResult.successNode[0] == null || v.conditionResult.failedNode[0] =='' || v.conditionResult.failedNode[0] == null)) {
@@ -379,6 +417,7 @@
         })
         if(!bool) {
           this.$message.warning(`${i18n.$t('Successful branch flow and failed branch flow are required')}`)
+          this.spinnerLoading = false
           return false
         }
         return true
@@ -488,6 +527,40 @@
        * Create a node popup layer
        * @param Object id
        */
+      _createLineLabel({id, sourceId, targetId}) {
+        // $('#jsPlumb_2_50').text('111')
+        let self = this
+        self.$modal.destroy()
+        const removeNodesEvent = (fromThis) => {
+          // Manually destroy events inside the component
+          fromThis.$destroy()
+          // Close the popup
+          eventModel.remove()
+        }
+        eventModel = this.$drawer({
+          className: 'dagMask',
+          render (h) {
+            return h(mFormLineModel,{
+              on: {
+                addLineInfo ({ item, fromThis }) {
+                  self.addConnects(item)
+                  setTimeout(() => {
+                    removeNodesEvent(fromThis)
+                  }, 100)
+                },
+                cancel ({fromThis}) {
+                  removeNodesEvent(fromThis)
+                }
+              },
+              props: {
+                id: id,
+                sourceId: sourceId,
+                targetId: targetId
+              }
+            })
+          }
+        })
+      },
       _createNodes ({ id, type }) {
         let self = this
         let preNode = []
@@ -520,6 +593,7 @@
           preNode = []
         }
         if (eventModel) {
+          // Close the popup
           eventModel.remove()
         }
 
@@ -537,6 +611,7 @@
           closable: false,
           direction: 'right',
           escClose: true,
+          className: 'dagMask',
           render: h => h(mFormModel, {
             on: {
               addTaskInfo ({ item, fromThis }) {
@@ -553,7 +628,8 @@
               cacheTaskInfo({item, fromThis}) {
                 self.cacheTasks(item)
               },
-              close ({ flag, fromThis }) {
+              close ({ item,flag, fromThis }) {
+                self.addTasks(item)
                 // Edit status does not allow deletion of nodes
                 if (flag) {
                   jsPlumb.remove(id)
@@ -571,7 +647,8 @@
               taskType: type,
               self: self,
               preNode: preNode,
-              rearList: rearList
+              rearList: rearList,
+              instanceId: this.$route.params.id
             }
           })
         })
@@ -606,8 +683,9 @@
           Endpoint: [
             'Dot', { radius: 1, cssClass: 'dot-style' }
           ],
-          Connector: 'Straight',
+          Connector: 'Bezier',
           PaintStyle: { lineWidth: 2, stroke: '#456' }, // Connection style
+          HoverPaintStyle: {stroke: '#ccc', strokeWidth: 3}, 
           ConnectionOverlays: [
             [
               'Arrow',
@@ -617,9 +695,14 @@
                 length: 12,
                 foldback: 0.8
               }
-            ]
+            ],
+            ['Label', {
+                location: 0.5,
+                id: 'label'
+            }]
           ],
-          Container: 'canvas'
+          Container: 'canvas',
+          ConnectionsDetachable: true
         })
       })
     },

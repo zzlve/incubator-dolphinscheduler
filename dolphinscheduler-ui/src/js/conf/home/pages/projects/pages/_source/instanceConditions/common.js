@@ -20,7 +20,7 @@ import i18n from '@/module/i18n'
 /**
  * State code table
  */
-let stateType = [
+const stateType = [
   {
     code: '',
     label: `${i18n.$t('none')}`
@@ -28,7 +28,7 @@ let stateType = [
     code: 'SUBMITTED_SUCCESS',
     label: `${i18n.$t('Submitted successfully')}`
   }, {
-    code: 'RUNNING_EXEUTION',
+    code: 'RUNNING_EXECUTION',
     label: `${i18n.$t('Running')}`
   }, {
     code: 'READY_PAUSE',

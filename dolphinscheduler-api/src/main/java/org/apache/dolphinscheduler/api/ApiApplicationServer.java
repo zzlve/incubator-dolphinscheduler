@@ -21,13 +21,14 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.ServletComponentScan;
 import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
 import org.springframework.context.annotation.ComponentScan;
-import springfox.documentation.swagger2.annotations.EnableSwagger2;
+import org.springframework.context.annotation.FilterType;
 
 @SpringBootApplication
 @ServletComponentScan
-@ComponentScan({"org.apache.dolphinscheduler.api",
-        "org.apache.dolphinscheduler.dao",
-        "org.apache.dolphinscheduler.service"})
+@ComponentScan(basePackages = {"org.apache.dolphinscheduler"},
+        excludeFilters = @ComponentScan.Filter(type = FilterType.REGEX,
+                pattern = "org.apache.dolphinscheduler.server.*"))
+
 public class ApiApplicationServer extends SpringBootServletInitializer {
 
   public static void main(String[] args) {

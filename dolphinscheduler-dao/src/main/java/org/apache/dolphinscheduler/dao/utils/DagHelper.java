@@ -23,7 +23,7 @@ import org.apache.dolphinscheduler.common.model.TaskNode;
 import org.apache.dolphinscheduler.common.model.TaskNodeRelation;
 import org.apache.dolphinscheduler.common.process.ProcessDag;
 import org.apache.dolphinscheduler.common.utils.CollectionUtils;
-import org.apache.dolphinscheduler.common.utils.JSONUtils;
+import org.apache.dolphinscheduler.common.utils.*;
 import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.apache.dolphinscheduler.dao.entity.ProcessData;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
@@ -98,14 +98,16 @@ public class DagHelper {
                 List<TaskNode> childNodeList = new ArrayList<>();
                 if (startNode == null) {
                     logger.error("start node name [{}] is not in task node list [{}] ",
-                        startNodeName,
-                        taskNodeList
+                            startNodeName,
+                            taskNodeList
                     );
                     continue;
                 } else if (TaskDependType.TASK_POST == taskDependType) {
-                    childNodeList = getFlowNodeListPost(startNode, taskNodeList);
+                    List<String> visitedNodeNameList = new ArrayList<>();
+                    childNodeList = getFlowNodeListPost(startNode, taskNodeList, visitedNodeNameList);
                 } else if (TaskDependType.TASK_PRE == taskDependType) {
-                    childNodeList = getFlowNodeListPre(startNode, recoveryNodeNameList, taskNodeList);
+                    List<String> visitedNodeNameList = new ArrayList<>();
+                    childNodeList = getFlowNodeListPre(startNode, recoveryNodeNameList, taskNodeList, visitedNodeNameList);
                 } else {
                     childNodeList.add(startNode);
                 }
@@ -128,14 +130,19 @@ public class DagHelper {
      * @param taskNodeList taskNodeList
      * @return task node list
      */
-    private static List<TaskNode> getFlowNodeListPost(TaskNode startNode, List<TaskNode> taskNodeList) {
+    private static List<TaskNode> getFlowNodeListPost(TaskNode startNode, List<TaskNode> taskNodeList, List<String> visitedNodeNameList) {
         List<TaskNode> resultList = new ArrayList<>();
         for (TaskNode taskNode : taskNodeList) {
             List<String> depList = taskNode.getDepList();
-            if (null != depList && null != startNode && depList.contains(startNode.getName())) {
-                resultList.addAll(getFlowNodeListPost(taskNode, taskNodeList));
+            if (null != depList && null != startNode && depList.contains(startNode.getName()) && !visitedNodeNameList.contains(taskNode.getName())) {
+                resultList.addAll(getFlowNodeListPost(taskNode, taskNodeList, visitedNodeNameList));
             }
         }
+        // why add (startNode != null) condition? for SonarCloud Quality Gate passed
+        if (null != startNode) {
+            visitedNodeNameList.add(startNode.getName());
+        }
+
         resultList.add(startNode);
         return resultList;
     }
@@ -148,7 +155,7 @@ public class DagHelper {
      * @param taskNodeList taskNodeList
      * @return task node list
      */
-    private static List<TaskNode> getFlowNodeListPre(TaskNode startNode, List<String> recoveryNodeNameList, List<TaskNode> taskNodeList) {
+    private static List<TaskNode> getFlowNodeListPre(TaskNode startNode, List<String> recoveryNodeNameList, List<TaskNode> taskNodeList, List<String> visitedNodeNameList) {
 
         List<TaskNode> resultList = new ArrayList<>();
 
@@ -158,15 +165,22 @@ public class DagHelper {
             resultList.add(startNode);
         }
         if (CollectionUtils.isEmpty(depList)) {
+            if (null != startNode) {
+                visitedNodeNameList.add(startNode.getName());
+            }
             return resultList;
         }
         for (String depNodeName : depList) {
             TaskNode start = findNodeByName(taskNodeList, depNodeName);
             if (recoveryNodeNameList.contains(depNodeName)) {
                 resultList.add(start);
-            } else {
-                resultList.addAll(getFlowNodeListPre(start, recoveryNodeNameList, taskNodeList));
+            } else if (!visitedNodeNameList.contains(depNodeName)) {
+                resultList.addAll(getFlowNodeListPre(start, recoveryNodeNameList, taskNodeList, visitedNodeNameList));
             }
+        }
+        // why add (startNode != null) condition? for SonarCloud Quality Gate passed
+        if (null != startNode) {
+            visitedNodeNameList.add(startNode.getName());
         }
         return resultList;
     }
@@ -360,5 +374,49 @@ public class DagHelper {
         processDag.setEdges(taskNodeRelations);
         processDag.setNodes(taskNodeList);
         return processDag;
+    }
+
+    /**
+     * is there have conditions after the parent node
+     * @param parentNodeName
+     * @return
+     */
+    public static boolean haveConditionsAfterNode(String parentNodeName,
+                                                  DAG<String, TaskNode, TaskNodeRelation> dag
+    ){
+        boolean result = false;
+        Set<String> subsequentNodes = dag.getSubsequentNodes(parentNodeName);
+        if(CollectionUtils.isEmpty(subsequentNodes)){
+            return result;
+        }
+        for(String nodeName : subsequentNodes){
+            TaskNode taskNode = dag.getNode(nodeName);
+            List<String> preTasksList = JSONUtils.toList(taskNode.getPreTasks(), String.class);
+            if(preTasksList.contains(parentNodeName) && taskNode.isConditionsTask()){
+                return true;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * is there have conditions after the parent node
+     * @param parentNodeName
+     * @return
+     */
+    public static boolean haveConditionsAfterNode(String parentNodeName,
+                                                  List<TaskNode> taskNodes
+    ){
+        boolean result = false;
+        if(CollectionUtils.isEmpty(taskNodes)){
+            return result;
+        }
+        for(TaskNode taskNode : taskNodes){
+            List<String> preTasksList = JSONUtils.toList(taskNode.getPreTasks(), String.class);
+            if(preTasksList.contains(parentNodeName) && taskNode.isConditionsTask()){
+                return true;
+            }
+        }
+        return result;
     }
 }

@@ -118,7 +118,7 @@ public class UdfFuncService extends BaseService{
         }
         udf.setDescription(desc);
         udf.setResourceId(resourceId);
-        udf.setResourceName(resource.getAlias());
+        udf.setResourceName(resource.getFullName());
         udf.setType(type);
 
         udf.setCreateTime(now);
@@ -226,7 +226,7 @@ public class UdfFuncService extends BaseService{
         }
         udf.setDescription(desc);
         udf.setResourceId(resourceId);
-        udf.setResourceName(resource.getAlias());
+        udf.setResourceName(resource.getFullName());
         udf.setType(type);
 
         udf.setUpdateTime(now);
@@ -300,7 +300,7 @@ public class UdfFuncService extends BaseService{
      * @param id udf function id
      * @return delete result code
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = RuntimeException.class)
     public Result delete(int id) {
         Result result = new Result();
         

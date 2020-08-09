@@ -81,21 +81,20 @@ public class ZookeeperMonitor extends AbstractZKClient {
 				if(ok){
 					state.getZookeeperInfo();
 				}
-				
-				String hostName = zookeeperServer;
+
 				int connections = state.getConnections();
 				int watches = state.getWatches();
 				long sent = state.getSent();
 				long received = state.getReceived();
 				String mode =  state.getMode();
-				int minLatency =  state.getMinLatency();
-				int avgLatency = state.getAvgLatency();
-				int maxLatency = state.getMaxLatency();
+				float minLatency =  state.getMinLatency();
+				float avgLatency = state.getAvgLatency();
+				float maxLatency = state.getMaxLatency();
 				int nodeCount = state.getNodeCount();
 				int status = ok ? 1 : 0;
 				Date date = new Date();
 
-				ZookeeperRecord zookeeperRecord = new ZookeeperRecord(hostName,connections,watches,sent,received,mode,minLatency,avgLatency,maxLatency,nodeCount,status,date);
+				ZookeeperRecord zookeeperRecord = new ZookeeperRecord(zookeeperServer,connections,watches,sent,received,mode,minLatency,avgLatency,maxLatency,nodeCount,status,date);
 				list.add(zookeeperRecord);
 
 			}

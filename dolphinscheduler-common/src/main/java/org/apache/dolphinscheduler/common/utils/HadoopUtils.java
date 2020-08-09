@@ -16,19 +16,18 @@
  */
 package org.apache.dolphinscheduler.common.utils;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
+import org.apache.commons.io.IOUtils;
 import org.apache.dolphinscheduler.common.Constants;
 import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
 import org.apache.dolphinscheduler.common.enums.ResUploadType;
-import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONException;
-import com.alibaba.fastjson.JSONObject;
-import org.apache.commons.io.IOUtils;
+import org.apache.dolphinscheduler.common.enums.ResourceType;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.*;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.*;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.client.cli.RMAdminCLI;
 import org.slf4j.Logger;
@@ -44,6 +43,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import static org.apache.dolphinscheduler.common.Constants.RESOURCE_UPLOAD_PATH;
+
 /**
  * hadoop utils
  * single instance
@@ -52,11 +53,17 @@ public class HadoopUtils implements Closeable {
 
     private static final Logger logger = LoggerFactory.getLogger(HadoopUtils.class);
 
+    private static String hdfsUser = PropertyUtils.getString(Constants.HDFS_ROOT_USER);
+    public static final String resourceUploadPath = PropertyUtils.getString(RESOURCE_UPLOAD_PATH, "/dolphinscheduler");
+    public static final String rmHaIds = PropertyUtils.getString(Constants.YARN_RESOURCEMANAGER_HA_RM_IDS);
+    public static final String appAddress = PropertyUtils.getString(Constants.YARN_APPLICATION_STATUS_ADDRESS);
+    public static final String jobHistoryAddress = PropertyUtils.getString(Constants.YARN_JOB_HISTORY_STATUS_ADDRESS);
+
     private static final String HADOOP_UTILS_KEY = "HADOOP_UTILS_KEY";
 
     private static final LoadingCache<String, HadoopUtils> cache = CacheBuilder
             .newBuilder()
-            .expireAfterWrite(PropertyUtils.getInt(Constants.KERBEROS_EXPIRE_TIME, 7), TimeUnit.DAYS)
+            .expireAfterWrite(PropertyUtils.getInt(Constants.KERBEROS_EXPIRE_TIME, 2), TimeUnit.HOURS)
             .build(new CacheLoader<String, HadoopUtils>() {
                 @Override
                 public HadoopUtils load(String key) throws Exception {
@@ -64,10 +71,10 @@ public class HadoopUtils implements Closeable {
                 }
             });
 
+    private static volatile boolean yarnEnabled = false;
+
     private Configuration configuration;
     private FileSystem fs;
-
-    private static String hdfsUser = PropertyUtils.getString(Constants.HDFS_ROOT_USER);
 
     private HadoopUtils() {
         init();
@@ -82,9 +89,9 @@ public class HadoopUtils implements Closeable {
     /**
      * init dolphinscheduler root path in hdfs
      */
+
     private void initHdfsPath() {
-        String hdfsPath = PropertyUtils.getString(Constants.DATA_STORE_2_HDFS_BASEPATH);
-        Path path = new Path(hdfsPath);
+        Path path = new Path(resourceUploadPath);
 
         try {
             if (!fs.exists(path)) {
@@ -103,14 +110,15 @@ public class HadoopUtils implements Closeable {
         try {
             configuration = new Configuration();
 
-            String resUploadStartupType = PropertyUtils.getString(Constants.RES_UPLOAD_STARTUP_TYPE);
-            ResUploadType resUploadType = ResUploadType.valueOf(resUploadStartupType);
+            String resourceStorageType = PropertyUtils.getUpperCaseString(Constants.RESOURCE_STORAGE_TYPE);
+            ResUploadType resUploadType = ResUploadType.valueOf(resourceStorageType);
 
             if (resUploadType == ResUploadType.HDFS) {
-                if (PropertyUtils.getBoolean(Constants.HADOOP_SECURITY_AUTHENTICATION_STARTUP_STATE)) {
+                if (PropertyUtils.getBoolean(Constants.HADOOP_SECURITY_AUTHENTICATION_STARTUP_STATE, false)) {
                     System.setProperty(Constants.JAVA_SECURITY_KRB5_CONF,
                             PropertyUtils.getString(Constants.JAVA_SECURITY_KRB5_CONF_PATH));
                     configuration.set(Constants.HADOOP_SECURITY_AUTHENTICATION, "kerberos");
+                    hdfsUser = "";
                     UserGroupInformation.setConfiguration(configuration);
                     UserGroupInformation.loginUserFromKeytab(PropertyUtils.getString(Constants.LOGIN_USER_KEY_TAB_USERNAME),
                             PropertyUtils.getString(Constants.LOGIN_USER_KEY_TAB_PATH));
@@ -151,6 +159,7 @@ public class HadoopUtils implements Closeable {
                     }
                 }
             } else if (resUploadType == ResUploadType.S3) {
+                System.setProperty(Constants.AWS_S3_V4, Constants.STRING_TRUE);
                 configuration.set(Constants.FS_DEFAULTFS, PropertyUtils.getString(Constants.FS_DEFAULTFS));
                 configuration.set(Constants.FS_S3A_ENDPOINT, PropertyUtils.getString(Constants.FS_S3A_ENDPOINT));
                 configuration.set(Constants.FS_S3A_ACCESS_KEY, PropertyUtils.getString(Constants.FS_S3A_ACCESS_KEY));
@@ -159,13 +168,6 @@ public class HadoopUtils implements Closeable {
             }
 
 
-            String rmHaIds = PropertyUtils.getString(Constants.YARN_RESOURCEMANAGER_HA_RM_IDS);
-            String appAddress = PropertyUtils.getString(Constants.YARN_APPLICATION_STATUS_ADDRESS);
-            if (!StringUtils.isEmpty(rmHaIds)) {
-                appAddress = getAppAddress(appAddress, rmHaIds);
-                logger.info("appAddress : {}", appAddress);
-            }
-            configuration.set(Constants.YARN_APPLICATION_STATUS_ADDRESS, appAddress);
         } catch (Exception e) {
             logger.error(e.getMessage(), e);
         }
@@ -184,8 +186,36 @@ public class HadoopUtils implements Closeable {
      * @param applicationId application id
      * @return url of application
      */
-    public String getApplicationUrl(String applicationId) {
-        return String.format(configuration.get(Constants.YARN_APPLICATION_STATUS_ADDRESS), applicationId);
+    public String getApplicationUrl(String applicationId) throws Exception {
+        /**
+         * if rmHaIds contains xx, it signs not use resourcemanager
+         * otherwise:
+         *  if rmHaIds is empty, single resourcemanager enabled
+         *  if rmHaIds not empty: resourcemanager HA enabled
+         */
+        String appUrl = "";
+
+        if (StringUtils.isEmpty(rmHaIds)){
+            //single resourcemanager enabled
+            appUrl = appAddress;
+            yarnEnabled = true;
+        } else {
+            //resourcemanager HA enabled
+            appUrl = getAppAddress(appAddress, rmHaIds);
+            yarnEnabled = true;
+            logger.info("application url : {}", appUrl);
+        }
+
+        if(StringUtils.isBlank(appUrl)){
+            throw new Exception("application url is blank");
+        }
+        return String.format(appUrl, applicationId);
+    }
+
+    public String getJobHistoryUrl(String applicationId) {
+        //eg:application_1587475402360_712719 -> job_1587475402360_712719
+        String jobId = applicationId.replace("application", "job");
+        return String.format(jobHistoryAddress, jobId);
     }
 
     /**
@@ -363,25 +393,45 @@ public class HadoopUtils implements Closeable {
         return fs.rename(new Path(src), new Path(dst));
     }
 
+    /**
+     * hadoop resourcemanager enabled or not
+     *
+     * @return result
+     */
+    public boolean isYarnEnabled() {
+        return yarnEnabled;
+    }
 
     /**
      * get the state of an application
      *
      * @param applicationId application id
      * @return the return may be null or there may be other parse exceptions
-     * @throws JSONException json exception
      */
-    public ExecutionStatus getApplicationStatus(String applicationId) throws JSONException {
+    public ExecutionStatus getApplicationStatus(String applicationId) throws Exception {
         if (StringUtils.isEmpty(applicationId)) {
             return null;
         }
 
+        String result = Constants.FAILED;
         String applicationUrl = getApplicationUrl(applicationId);
+        logger.info("applicationUrl={}", applicationUrl);
 
         String responseContent = HttpUtils.get(applicationUrl);
-
-        JSONObject jsonObject = JSON.parseObject(responseContent);
-        String result = jsonObject.getJSONObject("app").getString("finalStatus");
+        if (responseContent != null) {
+            ObjectNode jsonObject = JSONUtils.parseObject(responseContent);
+            result = jsonObject.path("app").path("finalStatus").asText();
+        } else {
+            //may be in job history
+            String jobHistoryUrl = getJobHistoryUrl(applicationId);
+            logger.info("jobHistoryUrl={}", jobHistoryUrl);
+            responseContent = HttpUtils.get(jobHistoryUrl);
+            ObjectNode jsonObject = JSONUtils.parseObject(responseContent);
+            if (!jsonObject.has("job")){
+                return ExecutionStatus.FAILURE;
+            }
+            result = jsonObject.path("job").path("state").asText();
+        }
 
         switch (result) {
             case Constants.ACCEPTED:
@@ -398,21 +448,39 @@ public class HadoopUtils implements Closeable {
 
             case Constants.RUNNING:
             default:
-                return ExecutionStatus.RUNNING_EXEUTION;
+                return ExecutionStatus.RUNNING_EXECUTION;
         }
     }
 
     /**
+     * get data hdfs path
+     *
      * @return data hdfs path
      */
     public static String getHdfsDataBasePath() {
-        String basePath = PropertyUtils.getString(Constants.DATA_STORE_2_HDFS_BASEPATH);
-        if ("/".equals(basePath)) {
+        if ("/".equals(resourceUploadPath)) {
             // if basepath is configured to /,  the generated url may be  //default/resources (with extra leading /)
             return "";
         } else {
-            return basePath;
+            return resourceUploadPath;
         }
+    }
+
+    /**
+     * hdfs resource dir
+     *
+     * @param tenantCode tenant code
+     * @param resourceType resource type
+     * @return hdfs resource dir
+     */
+    public static String getHdfsDir(ResourceType resourceType, String tenantCode) {
+        String hdfsDir = "";
+        if (resourceType.equals(ResourceType.FILE)) {
+            hdfsDir = getHdfsResDir(tenantCode);
+        } else if (resourceType.equals(ResourceType.UDF)) {
+            hdfsDir = getHdfsUdfDir(tenantCode);
+        }
+        return hdfsDir;
     }
 
     /**
@@ -446,26 +514,48 @@ public class HadoopUtils implements Closeable {
         return String.format("%s/udfs", getHdfsTenantDir(tenantCode));
     }
 
+
     /**
-     * get absolute path and name for file on hdfs
+     * get hdfs file name
+     *
+     * @param resourceType resource type
+     * @param tenantCode   tenant code
+     * @param fileName     file name
+     * @return hdfs file name
+     */
+    public static String getHdfsFileName(ResourceType resourceType, String tenantCode, String fileName) {
+        if (fileName.startsWith("/")) {
+            fileName = fileName.replaceFirst("/", "");
+        }
+        return String.format("%s/%s", getHdfsDir(resourceType, tenantCode), fileName);
+    }
+
+    /**
+     * get absolute path and name for resource file on hdfs
      *
      * @param tenantCode tenant code
-     * @param filename   file name
+     * @param fileName   file name
      * @return get absolute path and name for file on hdfs
      */
-    public static String getHdfsFilename(String tenantCode, String filename) {
-        return String.format("%s/%s", getHdfsResDir(tenantCode), filename);
+    public static String getHdfsResourceFileName(String tenantCode, String fileName) {
+        if (fileName.startsWith("/")) {
+            fileName = fileName.replaceFirst("/", "");
+        }
+        return String.format("%s/%s", getHdfsResDir(tenantCode), fileName);
     }
 
     /**
      * get absolute path and name for udf file on hdfs
      *
      * @param tenantCode tenant code
-     * @param filename   file name
+     * @param fileName   file name
      * @return get absolute path and name for udf file on hdfs
      */
-    public static String getHdfsUdfFilename(String tenantCode, String filename) {
-        return String.format("%s/%s", getHdfsUdfDir(tenantCode), filename);
+    public static String getHdfsUdfFileName(String tenantCode, String fileName) {
+        if (fileName.startsWith("/")) {
+            fileName = fileName.replaceFirst("/", "");
+        }
+        return String.format("%s/%s", getHdfsUdfDir(tenantCode), fileName);
     }
 
     /**
@@ -581,10 +671,13 @@ public class HadoopUtils implements Closeable {
                 return null;
             }
             //to json
-            JSONObject jsonObject = JSON.parseObject(retStr);
+            ObjectNode jsonObject = JSONUtils.parseObject(retStr);
 
             //get ResourceManager state
-            return jsonObject.getJSONObject("clusterInfo").getString("haState");
+            if (!jsonObject.has("clusterInfo")){
+                return null;
+            }
+            return jsonObject.get("clusterInfo").path("haState").asText();
         }
 
     }

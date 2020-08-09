@@ -50,7 +50,7 @@ public enum TaskStateType {
                 };
             case RUNNING:
                 return new int[]{ExecutionStatus.SUBMITTED_SUCCESS.ordinal(),
-                        ExecutionStatus.RUNNING_EXEUTION.ordinal(),
+                        ExecutionStatus.RUNNING_EXECUTION.ordinal(),
                         ExecutionStatus.READY_PAUSE.ordinal(),
                         ExecutionStatus.READY_STOP.ordinal()};
             case WAITTING:
@@ -60,7 +60,7 @@ public enum TaskStateType {
                 default:
                     break;
         }
-        return null;
+        return new int[0];
     }
 
 }

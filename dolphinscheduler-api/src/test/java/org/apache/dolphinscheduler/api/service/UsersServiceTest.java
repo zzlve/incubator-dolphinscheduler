@@ -22,9 +22,11 @@ import org.apache.dolphinscheduler.api.enums.Status;
 import org.apache.dolphinscheduler.api.utils.PageInfo;
 import org.apache.dolphinscheduler.api.utils.Result;
 import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.enums.ResourceType;
 import org.apache.dolphinscheduler.common.enums.UserType;
 import org.apache.dolphinscheduler.common.utils.CollectionUtils;
 import org.apache.dolphinscheduler.common.utils.EncryptionUtils;
+import org.apache.dolphinscheduler.dao.entity.Resource;
 import org.apache.dolphinscheduler.dao.entity.Tenant;
 import org.apache.dolphinscheduler.dao.entity.User;
 import org.apache.dolphinscheduler.dao.mapper.*;
@@ -68,6 +70,8 @@ public class UsersServiceTest {
     private DataSourceUserMapper datasourceUserMapper;
     @Mock
     private AlertGroupMapper alertGroupMapper;
+    @Mock
+    private ResourceMapper resourceMapper;
 
     private String queueName ="UsersServiceTestQueue";
 
@@ -93,41 +97,42 @@ public class UsersServiceTest {
         String email = "123@qq.com";
         int tenantId = Integer.MAX_VALUE;
         String phone= "13456432345";
+        int state = 1;
         try {
             //userName error
-            Map<String, Object> result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName);
+            Map<String, Object> result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
 
             userName = "userTest0001";
             userPassword = "userTest000111111111111111";
             //password error
-            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName);
+            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
 
             userPassword = "userTest0001";
             email = "1q.com";
             //email error
-            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName);
+            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
 
             email = "122222@qq.com";
             phone ="2233";
             //phone error
-            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName);
+            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
 
             phone = "13456432345";
             //tenantId not exists
-            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName);
+            result = usersService.createUser(user, userName, userPassword, email, tenantId, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.TENANT_NOT_EXIST, result.get(Constants.STATUS));
             //success
             Mockito.when(tenantMapper.queryById(1)).thenReturn(getTenant());
-            result = usersService.createUser(user, userName, userPassword, email, 1, phone, queueName);
+            result = usersService.createUser(user, userName, userPassword, email, 1, phone, queueName, state);
             logger.info(result.toString());
             Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
 
@@ -220,13 +225,13 @@ public class UsersServiceTest {
         String userPassword = "userTest0001";
         try {
             //user not exist
-            Map<String, Object> result = usersService.updateUser(0,userName,userPassword,"3443@qq.com",1,"13457864543","queue");
+            Map<String, Object> result = usersService.updateUser(0,userName,userPassword,"3443@qq.com",1,"13457864543","queue", 1);
             Assert.assertEquals(Status.USER_NOT_EXIST, result.get(Constants.STATUS));
             logger.info(result.toString());
 
             //success
             when(userMapper.selectById(1)).thenReturn(getUser());
-            result = usersService.updateUser(1,userName,userPassword,"32222s@qq.com",1,"13457864543","queue");
+            result = usersService.updateUser(1,userName,userPassword,"32222s@qq.com",1,"13457864543","queue", 1);
             logger.info(result.toString());
             Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
         } catch (Exception e) {
@@ -301,9 +306,13 @@ public class UsersServiceTest {
         logger.info(result.toString());
         Assert.assertEquals(Status.USER_NOT_EXIST, result.get(Constants.STATUS));
         //success
+        when(resourceMapper.queryAuthorizedResourceList(1)).thenReturn(new ArrayList<Resource>());
+
+        when(resourceMapper.selectById(Mockito.anyInt())).thenReturn(getResource());
         result = usersService.grantResources(loginUser, 1, resourceIds);
         logger.info(result.toString());
         Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
+
     }
 
 
@@ -444,6 +453,96 @@ public class UsersServiceTest {
         Assert.assertTrue(CollectionUtils.isNotEmpty(userList));
     }
 
+    @Test
+    public void testRegisterUser() {
+        String userName = "userTest0002~";
+        String userPassword = "userTest";
+        String repeatPassword = "userTest";
+        String email = "123@qq.com";
+        try {
+            //userName error
+            Map<String, Object> result = usersService.registerUser(userName, userPassword, repeatPassword, email);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            userName = "userTest0002";
+            userPassword = "userTest000111111111111111";
+            //password error
+            result = usersService.registerUser(userName, userPassword, repeatPassword, email);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            userPassword = "userTest0002";
+            email = "1q.com";
+            //email error
+            result = usersService.registerUser(userName, userPassword, repeatPassword, email);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            //repeatPassword error
+            email = "7400@qq.com";
+            repeatPassword = "userPassword";
+            result = usersService.registerUser(userName, userPassword, repeatPassword, email);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            //success
+            repeatPassword = "userTest0002";
+            result = usersService.registerUser(userName, userPassword, repeatPassword, email);
+            Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
+
+        } catch (Exception e) {
+            Assert.assertTrue(false);
+        }
+    }
+
+
+    @Test
+    public void testActivateUser() {
+        User user = new User();
+        user.setUserType(UserType.GENERAL_USER);
+        String userName = "userTest0002~";
+        try {
+            //not admin
+            Map<String, Object> result = usersService.activateUser(user, userName);
+            Assert.assertEquals(Status.USER_NO_OPERATION_PERM, result.get(Constants.STATUS));
+
+            //userName error
+            user.setUserType(UserType.ADMIN_USER);
+            result = usersService.activateUser(user, userName);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            //user not exist
+            userName = "userTest10013";
+            result = usersService.activateUser(user, userName);
+            Assert.assertEquals(Status.USER_NOT_EXIST, result.get(Constants.STATUS));
+
+            //user state error
+            userName = "userTest0001";
+            when(userMapper.queryByUserNameAccurately(userName)).thenReturn(getUser());
+            result = usersService.activateUser(user, userName);
+            Assert.assertEquals(Status.REQUEST_PARAMS_NOT_VALID_ERROR, result.get(Constants.STATUS));
+
+            //success
+            when(userMapper.queryByUserNameAccurately(userName)).thenReturn(getDisabledUser());
+            result = usersService.activateUser(user, userName);
+            Assert.assertEquals(Status.SUCCESS, result.get(Constants.STATUS));
+        } catch (Exception e) {
+            Assert.assertTrue(false);
+        }
+    }
+
+    /**
+     * get disabled user
+     * @return
+     */
+    private User getDisabledUser() {
+
+        User user = new User();
+        user.setUserType(UserType.GENERAL_USER);
+        user.setUserName("userTest0001");
+        user.setUserPassword("userTest0001");
+        user.setState(0);
+        return user;
+    }
+
+
     /**
      * get user
      * @return
@@ -473,14 +572,34 @@ public class UsersServiceTest {
         user.setUserType(UserType.ADMIN_USER);
         user.setUserName("userTest0001");
         user.setUserPassword("userTest0001");
+        user.setState(1);
         return user;
     }
 
-
+    /**
+     * get tenant
+     * @return tenant
+     */
     private Tenant getTenant(){
         Tenant tenant = new Tenant();
         tenant.setId(1);
         return tenant;
+    }
+
+    /**
+     * get resource
+     * @return resource
+     */
+    private Resource getResource(){
+
+        Resource resource = new Resource();
+        resource.setPid(-1);
+        resource.setUserId(1);
+        resource.setDescription("ResourcesServiceTest.jar");
+        resource.setAlias("ResourcesServiceTest.jar");
+        resource.setFullName("/ResourcesServiceTest.jar");
+        resource.setType(ResourceType.FILE);
+        return resource;
     }
 
 }
